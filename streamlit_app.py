@@ -24,7 +24,7 @@ def scale_image(img, scale):
     width, height = img.size
     new_width = int(width * scale)
     new_height = int(height * scale)
-    return img.resize((new_width, new_height))
+    return img.resize((new_width, new_height), Image.LANCZOS)
 
 def fill_background_color(img, color_hex):
     if isinstance(img, np.ndarray):
