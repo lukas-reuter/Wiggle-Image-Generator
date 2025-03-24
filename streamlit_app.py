@@ -6,12 +6,20 @@ from streamlit_image_coordinates import streamlit_image_coordinates
 import os
 import io
 from PIL import Image, ImageFile
+from PIL import ImageFilter
 import base64
 import math
+
 #ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 def split_image(img):
     width, height = img.size
+
+    if width % 3 != 0: #if width is not divisible by 3
+        new_width = width - (width % 3)
+        img = img.resize((new_width, height))
+        width = new_width
+
     split_width = width // 3
 
     img1 = img.crop((0, 0, split_width, height))
@@ -24,7 +32,18 @@ def scale_image(img, scale):
     width, height = img.size
     new_width = int(width * scale)
     new_height = int(height * scale)
-    return img.resize((new_width, new_height), Image.LANCZOS)
+    return img.resize((new_width, new_height))
+
+def smooth_image(img, sigma):
+    blured_img = img.filter(ImageFilter.GaussianBlur(sigma))
+    return blured_img
+
+def rote_image(img, angle):
+    # remove black border
+    img = img.convert("RGBA")
+    img = img.rotate(angle, expand=True)
+    img = img.convert("RGB")
+    return img
 
 def fill_background_color(img, color_hex):
     if isinstance(img, np.ndarray):
@@ -134,73 +153,39 @@ def create_gif(img1, img2, img3, shift1_x, shift1_y, shift3_x, shift3_y, frame_d
     gif_bytes.seek(0)
     return gif_bytes
 
-def create_mp4(img1, img2, img3, shift1_x, shift1_y, shift3_x, shift3_y, frame_duration, duration, color):
+def create_mp4_opencv(img1, img2, img3, shift1_x, shift1_y, shift3_x, shift3_y, frame_duration, duration, color):
     aligned_img1, img2, aligned_img3 = align_and_fill(img1, img2, img3, shift1_x, shift1_y, shift3_x, shift3_y, color)
 
     frames = [aligned_img1, img2, aligned_img3, img2]
     pil_frames = [Image.fromarray(frame) if isinstance(frame, np.ndarray) else frame for frame in frames]
     
-    # Sicherstellen, dass alle Frames im RGB-Format vorliegen
     pil_frames = [frame.convert("RGB") if frame.mode == "RGBA" else frame for frame in pil_frames]
     
-    # Repeat frames until duration is reached
     total_frames = int(duration / (frame_duration / 1000))
-    frame_count = 0
+    frame_list = []
 
-    # Create MP4 video
+    for _ in range(total_frames // len(pil_frames)):
+        frame_list.extend(pil_frames)
+
     mp4_bytes = io.BytesIO()
-    writer = imageio.get_writer(mp4_bytes, format='mp4', mode='I', fps=1000 / frame_duration, codec='libx264')
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # MP4 Codec
+    width, height = pil_frames[0].size
+    fps = 1000 / frame_duration
 
-    while frame_count < total_frames:
-        for frame in pil_frames:
-            writer.append_data(np.array(frame))
-            frame_count += 1
-            if frame_count >= total_frames:
-                break
-    
-    writer.close()
-    mp4_bytes.seek(0)
-    return mp4_bytes
+    temp_filename = "temp_video.mp4"
+    video_writer = cv2.VideoWriter(temp_filename, fourcc, fps, (width, height))
 
-def gif_bytes_to_mp4_bytes(gif_bytes, frame_duration, duration):
-    # GIF aus Bytes laden
-    gif = imageio.mimread(gif_bytes, memtest=False)
-    
-    # Bildgröße und Frame Rate bestimmen
-    height, width, _ = gif[0].shape
-    fps = 50 / frame_duration
+    for frame in frame_list:
+        frame_bgr = cv2.cvtColor(np.array(frame), cv2.COLOR_RGB2BGR)
+        video_writer.write(frame_bgr)
 
-    # Anzahl der Wiederholungen berechnen
-    gif_length = len(gif) * (frame_duration / 1000)  # Länge des GIF in Sekunden
-    repeats = math.ceil(duration / gif_length)
-
-    # MP4-BytesIO-Objekt erstellen
-    mp4_bytes = io.BytesIO()
-
-    # Temporäre Datei zum Speichern des MP4-Videos
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    video_writer = cv2.VideoWriter("temp.mp4", fourcc, fps, (width, height))
-
-    # Frames so oft wiederholen, bis die gewünschte Dauer erreicht ist
-    frames_written = 0
-    while frames_written / fps < duration:
-        for frame in gif:
-            # Frame von RGB nach BGR konvertieren (OpenCV benötigt BGR)
-            frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-            video_writer.write(frame_bgr)
-            frames_written += 1
-            # Überprüfen, ob die Dauer erreicht ist
-            if frames_written / fps >= duration:
-                break
-
-    # Video Writer schließen
     video_writer.release()
 
-    # MP4 in Bytes lesen
-    with open("temp.mp4", "rb") as f:
+    with open(temp_filename, "rb") as f:
         mp4_bytes.write(f.read())
 
-    # Den Speicher auf den Anfang zurücksetzen
+    os.remove(temp_filename)
+
     mp4_bytes.seek(0)
 
     return mp4_bytes
@@ -239,9 +224,13 @@ if uploaded_file is not None:
     img = Image.open(uploaded_file)
     
     st.header('Settings')
-    # Choose background option
-    scale_percent = st.slider('Scale', 0, 100, 100)
+    on_vertical = st.toggle("Vertical Image", False)
 
+    # Scale and blur
+    scale_percent = st.slider('Scale (%)', 0, 100, 100)
+    blur = st.slider('Blur (Sigma)', 0, 10, 0)
+    
+    # Choose background option
     background_options = ['Crop to Content', 'Image 2', 'Solid color']
     background_option = st.selectbox('Background', background_options)
     if background_option == 'Solid color':
@@ -275,10 +264,24 @@ if uploaded_file is not None:
         a23_y = st.number_input('a_y', value=0.9847)
         t23_y = st.number_input('t_y', value=19.4259)
 
+    if on_vertical:
+        img = rote_image(img, 90)
+
     img1, img2, img3 = split_image(img)
     img1 = scale_image(img1, scale_percent / 100)
     img2 = scale_image(img2, scale_percent / 100)
     img3 = scale_image(img3, scale_percent / 100)
+
+    if blur > 0:
+        img1 = smooth_image(img1, blur)
+        img2 = smooth_image(img2, blur)
+        img3 = smooth_image(img3, blur)
+
+    if on_vertical:
+        img1 = rote_image(img1, -90)
+        img2 = rote_image(img2, -90)
+        img3 = rote_image(img3, -90)
+
     orig_width = img1.size[0]
 
     #left, middle, right = st.columns(3)
@@ -290,13 +293,9 @@ if uploaded_file is not None:
     if focus_point_option == 'Linear transformation':
             click_1, click_2, click_3 = False, False, False
             coords1_s, coords2_s, coords3_s = None, None, None
-            width = 600
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                pass
-            with col3:
-                pass
-            with col2:
+
+            if on_vertical:
+                width = 1500
                 value = streamlit_image_coordinates(
                     img2,
                     key="local2",
@@ -314,16 +313,43 @@ if uploaded_file is not None:
                     coords3_s = [x3, y3]
 
                     click_1, click_2, click_3 = True, True, True
-        
                 else:
                     st.write("select focus point of the center image", use_container_width=True)
+
+            if not on_vertical:
+                width = 600
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    pass
+                with col3:
+                    pass
+                with col2:
+                    value = streamlit_image_coordinates(
+                        img2,
+                        key="local2",
+                        width=width,
+                    )
+                    if value is not None:
+                        coords2_s = [value["x"], value["y"]]
+                        st.write(f"Focus point: ({coords2_s[0]}/{coords2_s[1]})", use_container_width=True)
+
+                        x1 = a21_x * coords2_s[0] * (orig_width//width) + t21_x
+                        y1 = a21_y * coords2_s[1] * (orig_width//width) + t21_y
+                        coords1_s = [x1, y1]
+                        x3 = a23_x * coords2_s[0] * (orig_width//width) + t23_x
+                        y3 = a23_y * coords2_s[1] * (orig_width//width) + t23_y
+                        coords3_s = [x3, y3]
+
+                        click_1, click_2, click_3 = True, True, True
+                    else:
+                        st.write("select focus point of the center image", use_container_width=True)
     else:
             click_1, click_2, click_3 = False, False, False
             coords1_s, coords2_s, coords3_s = None, None, None
             col1, col2, col3 = st.columns(3)
 
-            width = 600
-            with col1:
+            if on_vertical:
+                width = 1500
                 value = streamlit_image_coordinates(
                     img1,
                     key="local1",
@@ -336,7 +362,6 @@ if uploaded_file is not None:
                 else:
                     st.write("Select focus point of the left image", use_container_width=True)
 
-            with col2:
                 value = streamlit_image_coordinates(
                     img2,
                     key="local2",
@@ -348,8 +373,7 @@ if uploaded_file is not None:
                     st.write(f"Focus point: ({coords2_s[0]}/{coords2_s[1]})", use_container_width=True)
                 else:
                     st.write("select focus point of the center image", use_container_width=True)
-
-            with col3:
+                
                 value = streamlit_image_coordinates(
                     img3,
                     key="local3",
@@ -361,6 +385,47 @@ if uploaded_file is not None:
                     st.write(f"Focus point: ({coords3_s[0]}/{coords3_s[1]})", use_container_width=True)
                 else:
                     st.write("select focus point of the right image", use_container_width=True)
+            
+            if not on_vertical:
+                width = 600
+                with col1:
+                    value = streamlit_image_coordinates(
+                        img1,
+                        key="local1",
+                        width=width,
+                    )
+                    if value is not None:
+                        coords1_s = [value["x"], value["y"]]
+                        click_1 = True
+                        st.write(f"Focus point: ({coords1_s[0]}/{coords1_s[1]})", use_container_width=True)
+                    else:
+                        st.write("Select focus point of the left image", use_container_width=True)
+
+                with col2:
+                    value = streamlit_image_coordinates(
+                        img2,
+                        key="local2",
+                        width=width,
+                    )
+                    if value is not None:
+                        coords2_s = [value["x"], value["y"]]
+                        click_2 = True
+                        st.write(f"Focus point: ({coords2_s[0]}/{coords2_s[1]})", use_container_width=True)
+                    else:
+                        st.write("select focus point of the center image", use_container_width=True)
+
+                with col3:
+                    value = streamlit_image_coordinates(
+                        img3,
+                        key="local3",
+                        width=width,
+                    )
+                    if value is not None:
+                        coords3_s = [value["x"], value["y"]]
+                        click_3 = True
+                        st.write(f"Focus point: ({coords3_s[0]}/{coords3_s[1]})", use_container_width=True)
+                    else:
+                        st.write("select focus point of the right image", use_container_width=True)
 
     if click_1 and click_2 and click_3:
                 
@@ -379,24 +444,11 @@ if uploaded_file is not None:
 
                 if st.button(f'Create {output_option}', use_container_width=True):
 
-                    # Create GIF
-                    gif_bytes = create_gif(np.array(img1), np.array(img2), np.array(img3), shift1_x, shift1_y, shift3_x, shift3_y, frame_duration, color)
-                    download_path = 'wiggle_image.gif'
-
                     if output_option == 'MP4':
                         # Create MP4
-                        mp4_bytes = gif_bytes_to_mp4_bytes(gif_bytes, frame_duration, duration)
+                        mp4_bytes = create_mp4_opencv(np.array(img1), np.array(img2), np.array(img3), shift1_x, shift1_y, shift3_x, shift3_y, frame_duration, duration, color)
                         download_path = 'wiggle_image.mp4'
-                    
-                    if output_option == 'GIF':
-                        # Download button
-                        st.download_button(
-                                        label=f"Download {output_option}",
-                                        data=gif_bytes,
-                                        file_name=download_path,
-                                        mime="image/gif", use_container_width=True
-                                    )
-                    else:
+
                         # Download button
                         st.download_button(
                                         label=f"Download {output_option}",
@@ -404,4 +456,17 @@ if uploaded_file is not None:
                                         file_name=download_path,
                                         mime="video/mp4", use_container_width=True
                                    )
+                    
+                    if output_option == 'GIF':
+                        # Create GIF
+                        gif_bytes = create_gif(np.array(img1), np.array(img2), np.array(img3), shift1_x, shift1_y, shift3_x, shift3_y, frame_duration, color)
+                        download_path = 'wiggle_image.gif'
+
+                        # Download button
+                        st.download_button(
+                                        label=f"Download {output_option}",
+                                        data=gif_bytes,
+                                        file_name=download_path,
+                                        mime="image/gif", use_container_width=True
+                                    )
 
