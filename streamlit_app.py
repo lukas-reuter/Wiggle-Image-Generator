@@ -170,7 +170,7 @@ def create_mp4_opencv(img1, img2, img3, shift1_x, shift1_y, shift3_x, shift3_y, 
     mp4_bytes = io.BytesIO()
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # MP4 Codec
     width, height = pil_frames[0].size
-    fps = 1000 / frame_duration
+    fps = 100 / frame_duration 
 
     temp_filename = "temp_video.mp4"
     video_writer = cv2.VideoWriter(temp_filename, fourcc, fps, (width, height))
