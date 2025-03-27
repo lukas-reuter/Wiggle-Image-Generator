@@ -7,15 +7,12 @@ import os
 import io
 from PIL import Image, ImageFile
 from PIL import ImageFilter
-import base64
-import math
-
-#ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 def split_image(img):
     width, height = img.size
 
-    if width % 3 != 0: #if width is not divisible by 3
+    #If width is not divisible by 3
+    if width % 3 != 0:
         new_width = width - (width % 3)
         img = img.resize((new_width, height))
         width = new_width
@@ -28,6 +25,13 @@ def split_image(img):
 
     return img1, img2, img3
 
+def compress_image(img, quality):
+    img = img.convert("RGB")
+    img_bytes = io.BytesIO()
+    img.save(img_bytes, format="JPEG", quality=quality)
+    img_bytes.seek(0)
+    return Image.open(img_bytes)
+
 def scale_image(img, scale):
     width, height = img.size
     new_width = int(width * scale)
@@ -39,9 +43,9 @@ def smooth_image(img, sigma):
     return blured_img
 
 def rote_image(img, angle):
-    # remove black border
+   
     img = img.convert("RGBA")
-    img = img.rotate(angle, expand=True)
+    img = img.rotate(angle, expand=True) # remove black border
     img = img.convert("RGB")
     return img
 
@@ -66,11 +70,9 @@ def fill_background_img2(img, img2):
     if isinstance(img2, np.ndarray):
         img2 = Image.fromarray(img2)
 
-    # Ensure both images are in RGBA mode
     img = img.convert("RGBA")
     img2 = img2.convert("RGBA")
 
-    # Create a blank transparent canvas
     canvas = Image.new("RGBA", img.size, (0, 0, 0, 0))
 
     composite = Image.alpha_composite(canvas, img2)
@@ -81,14 +83,12 @@ def fill_background_img2(img, img2):
 def translate_image(image, x_shift, y_shift):
     if isinstance(image, np.ndarray):
         image = Image.fromarray(image)
-    # Ensure the image has an alpha channel
+
     image = image.convert("RGBA")
 
-    # Create a blank transparent background
     width, height = image.size
     background = Image.new("RGBA", (width, height), (0, 0, 0, 0))
 
-    # Paste the image onto the background with the shift
     background.paste(image, (int(x_shift), int(y_shift)), image)
     return background
 
@@ -168,9 +168,9 @@ def create_mp4_opencv(img1, img2, img3, shift1_x, shift1_y, shift3_x, shift3_y, 
         frame_list.extend(pil_frames)
 
     mp4_bytes = io.BytesIO()
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # MP4 Codec
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
     width, height = pil_frames[0].size
-    fps = 100 / frame_duration 
+    fps = 1000 / frame_duration
 
     temp_filename = "temp_video.mp4"
     video_writer = cv2.VideoWriter(temp_filename, fourcc, fps, (width, height))
@@ -194,42 +194,58 @@ def create_mp4_opencv(img1, img2, img3, shift1_x, shift1_y, shift3_x, shift3_y, 
 st.set_page_config(layout="wide")
 st.image("logo.png", width=100)
 st.title('Wiggle Image Generator')
-st.markdown("""
-The **Wiggle Image Creator** generates dynamic wiggle images from a single source file, with output formats available as **GIF** or **MP4**.
-
-### How It Works
-The program assumes by default that the source file contains **three equally sized sub-images** that are **evenly distributed**. To create a realistic 3D wiggle effect, a **focus point** is defined for each sub-image, aligning them accordingly. **Image 2** serves as the **reference point**. The selection of focus points can be made either **semi-automatically** or **manually**.
-
+st.markdown("""        
 ---
 
-### Customizable Settings
-
-- **Frame Duration and Video Length (MP4 only)**: Adjust the speed and total duration of the video to suit your needs.  
-
-- **Background Options**: Since only Image 1 and Image 3 are aligned with Image 2, **empty areas** may appear. These gaps can be filled with either a **solid color** or with **Image 2** itself.  
-
-- **Focus Point Selection**:  
-  - **Semi-Automatic**: The focus point is determined based on Image 2, with the shift of points interpolated using a shift profile.  
-  - **Manual**: The focus point can be set individually for each frame. **High precision** is essential here, as better focus point matching leads to a more convincing wiggle effect.  
-
-- **Crop to Content**: The final wiggle image can be cropped to display only the area where **all three sub-images overlap**. This ensures a **clean and professional appearance** without unwanted borders.  
+The **Wiggle Image Creator** generates dynamic wiggle images from a single source file, with output formats available as **GIF** or **MP4**. The underlying lens is 3D printable and is based on three Kodak Funsaver lenses. The lens is designed for Sony E-mount full-frame cameras. The necessary STL files for printing can be found [here](%s).
 
 ---
+"""% "test")
+with st.expander("How It Works"):
+    st.markdown("""
+    The program assumes by default that the source file contains **three equally sized sub-images** that are **evenly distributed**. By default the program assumes an horizontal orientation. If the image is not divisible by three, the program will **resize** the image accordingly.
+    To create a realistic 3D wiggle effect, a **focus point** is defined for each sub-image, aligning them accordingly. **Image 2** serves as the **reference point**. The selection of focus points can be made either **semi-automatically** or **manually**.
+
+    """)
+
+with st.expander("Customizable Settings"):
+    st.markdown("""
+
+    - **Quality**: Adjust the quality of the image to reduce the file size.
+
+    - **Scale**: Resize the image to fit your requirements.
+                
+    - **Blur**: Apply a Gaussian blur to the image to create a smoother appearance.
+
+    - **Frame Duration and Video Length (MP4 only)**: Adjust the speed and total duration of the video to suit your needs.  
+
+    - **Background Options**: Since only Image 1 and Image 3 are aligned with Image 2, **empty areas** may appear. These gaps can be filled with either a **solid color** or with **Image 2** itself. Another Option is **Crop to Content**. Here the final image is cropped to display only the area where **all three sub-images overlap**.  
+
+    - **Focus Point Selection**:  
+    - **Semi-Automatic**: The focus point is determined based on Image 2, with the shift of points interpolated using a shift profile.  
+    - **Manual**: The focus point can be set individually for each frame. **High precision** is essential here, as better focus point matching leads to a more convincing wiggle effect.  
+
 """)
+
+# Upload image
 st.header('Upload Image')
 uploaded_file = st.file_uploader('Upload an image', type=['jpg', 'jpeg', 'png'])
+
 
 if uploaded_file is not None:
     # Load image
     img = Image.open(uploaded_file)
     
+    ## Settings input
     st.header('Settings')
+    # Orientation
     on_vertical = st.toggle("Vertical Image", False)
-
-    # Scale and blur
+    # Compression
+    compression = st.slider('Quality (%)', 0, 100, 100)
+    # Scale
     scale_percent = st.slider('Scale (%)', 0, 100, 100)
+    # Blur
     blur = st.slider('Blur (Sigma)', 0, 10, 0)
-    
     # Choose background option
     background_options = ['Crop to Content', 'Image 2', 'Solid color']
     background_option = st.selectbox('Background', background_options)
@@ -237,7 +253,6 @@ if uploaded_file is not None:
         color = st.color_picker('Background color')
     else:
         color = None
-
     # Choose output type
     output_options = ['GIF', 'MP4']
     output_option = st.selectbox('Output type', output_options)
@@ -245,7 +260,6 @@ if uploaded_file is not None:
     frame_duration = int(st.slider('Frame duration (ms)', 0, 50, 10))
     if output_option == 'MP4':
         duration = int(st.slider('Duration (s)', 0, 10, 4))
-
     # Choose focus point selection
     focus_point_options = ['Manual','Linear transformation']
     focus_point_option = st.selectbox('Focus point selection', focus_point_options)
@@ -264,10 +278,18 @@ if uploaded_file is not None:
         a23_y = st.number_input('a_y', value=0.9847)
         t23_y = st.number_input('t_y', value=19.4259)
 
+    ## Perform image processing
+    # Rotate image if vertical before splitting
     if on_vertical:
         img = rote_image(img, 90)
-
+    # Split image
     img1, img2, img3 = split_image(img)
+    # Process images
+    if compression < 100:
+        img1 = compress_image(img1, compression)
+        img2 = compress_image(img2, compression)
+        img3 = compress_image(img3, compression)
+
     img1 = scale_image(img1, scale_percent / 100)
     img2 = scale_image(img2, scale_percent / 100)
     img3 = scale_image(img3, scale_percent / 100)
@@ -277,6 +299,7 @@ if uploaded_file is not None:
         img2 = smooth_image(img2, blur)
         img3 = smooth_image(img3, blur)
 
+    # Rotate images back
     if on_vertical:
         img1 = rote_image(img1, -90)
         img2 = rote_image(img2, -90)
@@ -284,13 +307,12 @@ if uploaded_file is not None:
 
     orig_width = img1.size[0]
 
-    #left, middle, right = st.columns(3)
-
     if st.button("Set settings", use_container_width=True):
         st.header('Focus Point Selection')
         st.write('Click on the image windows to select focus points for alignment:')
         
     if focus_point_option == 'Linear transformation':
+            # Only one image is displayed
             click_1, click_2, click_3 = False, False, False
             coords1_s, coords2_s, coords3_s = None, None, None
 
@@ -445,9 +467,11 @@ if uploaded_file is not None:
                 if st.button(f'Create {output_option}', use_container_width=True):
 
                     if output_option == 'MP4':
-                        # Create MP4
-                        mp4_bytes = create_mp4_opencv(np.array(img1), np.array(img2), np.array(img3), shift1_x, shift1_y, shift3_x, shift3_y, frame_duration, duration, color)
-                        download_path = 'wiggle_image.mp4'
+                        with st.spinner("Creating wiggle Image...", show_time=True):
+                            # Create MP4
+                            mp4_bytes = create_mp4_opencv(np.array(img1), np.array(img2), np.array(img3), shift1_x, shift1_y, shift3_x, shift3_y, frame_duration, duration, color)
+                            download_path = 'wiggle_image.mp4'
+                        st.success("Done!")
 
                         # Download button
                         st.download_button(
@@ -458,10 +482,12 @@ if uploaded_file is not None:
                                    )
                     
                     if output_option == 'GIF':
-                        # Create GIF
-                        gif_bytes = create_gif(np.array(img1), np.array(img2), np.array(img3), shift1_x, shift1_y, shift3_x, shift3_y, frame_duration, color)
-                        download_path = 'wiggle_image.gif'
-
+                        with st.spinner("Creating wiggle Image...", show_time=True):
+                            # Create GIF
+                            gif_bytes = create_gif(np.array(img1), np.array(img2), np.array(img3), shift1_x, shift1_y, shift3_x, shift3_y, frame_duration, color)
+                            download_path = 'wiggle_image.gif'
+                        st.success("Done!")
+                        
                         # Download button
                         st.download_button(
                                         label=f"Download {output_option}",
